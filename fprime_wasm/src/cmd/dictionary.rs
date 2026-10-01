@@ -91,8 +91,8 @@ fn install(root: &Path, source: &Path) -> Result<PathBuf> {
     Ok(relative)
 }
 
-/// A `.json` already sitting in the project's dictionary directory.
-fn existing(root: &Path) -> Option<PathBuf> {
+/// A `.json` already sitting in the project's dictionary directory, relative to `root`.
+pub fn existing(root: &Path) -> Option<PathBuf> {
     let directory = root.join(DICTIONARY_DIR);
     let mut candidates: Vec<PathBuf> = std::fs::read_dir(&directory)
         .ok()?

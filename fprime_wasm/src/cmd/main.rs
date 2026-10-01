@@ -6,6 +6,7 @@ mod cargo;
 mod cli;
 mod dictionary;
 mod init;
+mod seq;
 mod test;
 mod verify;
 
@@ -21,6 +22,7 @@ fn main() -> ExitCode {
         Command::Build(args) => build::run(&args),
         Command::Test(args) => test::run(&args),
         Command::Verify(args) => verify::run(&args),
+        Command::Seq(args) => seq::run(&args),
     };
 
     match result {

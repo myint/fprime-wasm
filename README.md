@@ -6,7 +6,7 @@ inside a Wasm interpreter.
 
 | Crate | |
 |---|---|
-| [`fprime-wasm`](fprime_wasm) | The `fprime-wasm` command: scaffold a sequence project, add sequences, build and test them, size a module against the on-board interpreter |
+| [`fprime-wasm`](fprime_wasm) | The `fprime-wasm` command: scaffold a sequence project, add sequences, build and test them, size a module against the on-board interpreter, compile `.seq` command sequences with conditionals |
 | [`fprime_test`](fprime_test) | The `#[fprime_test]` DSL: run a sequence on `spacewasm` and check what it does |
 | [`fprime_core`](fprime_core) | `no_std` runtime a sequence links against, and the guest side of the `fprime_v1` host ABI |
 | [`fprime_build`](fprime_build) | `build.rs` code generator, turning an F Prime JSON dictionary into a typed Rust API |

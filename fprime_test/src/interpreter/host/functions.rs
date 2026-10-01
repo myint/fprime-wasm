@@ -175,10 +175,14 @@ pub fn module(shared: &Ctx) -> HostModule {
                         return ControlFlow::Break(brk);
                     }
 
+                    let status = shared
+                        .ask(|script| script.telemetry_status(id))
+                        .flatten()
+                        .unwrap_or(abi::TLM_VALID);
                     recording.push(Call::Telemetry {
                         id,
                         value_len: value_len.unsigned_abs(),
-                        status: abi::TLM_VALID,
+                        status,
                     });
                     if canned.is_none() {
                         recording.inform(format!(
@@ -186,7 +190,7 @@ pub fn module(shared: &Ctx) -> HostModule {
                          value, and `sets_telemetry` changes one mid-run"
                         ));
                     }
-                    ControlFlow::Continue(Some(Value::I32(abi::TLM_VALID)))
+                    ControlFlow::Continue(Some(Value::I32(status)))
                 }
             ),
             host_function!(
@@ -222,10 +226,14 @@ pub fn module(shared: &Ctx) -> HostModule {
                         return ControlFlow::Break(brk);
                     }
 
+                    let status = shared
+                        .ask(|script| script.parameter_status(id))
+                        .flatten()
+                        .unwrap_or(abi::PARAM_VALID);
                     recording.push(Call::Parameter {
                         id,
                         value_len: value_len.unsigned_abs(),
-                        status: abi::PARAM_VALID,
+                        status,
                     });
                     if canned.is_none() {
                         recording.inform(format!(
@@ -233,7 +241,7 @@ pub fn module(shared: &Ctx) -> HostModule {
                          `sets_parameter` changes one mid-run"
                     ));
                     }
-                    ControlFlow::Continue(Some(Value::I32(abi::PARAM_VALID)))
+                    ControlFlow::Continue(Some(Value::I32(status)))
                 }
             ),
             host_function!(

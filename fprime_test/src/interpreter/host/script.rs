@@ -21,6 +21,19 @@ pub trait Script {
         None
     }
 
+    /// The `Fw::TlmValid` a channel read reports, asked after its value; `None` is VALID (0).
+    fn telemetry_status(&mut self, id: i64) -> Option<i32> {
+        let _ = id;
+        None
+    }
+
+    /// The `Fw::ParamValid` a parameter read reports, asked after its value; `None` is
+    /// VALID (1).
+    fn parameter_status(&mut self, id: i64) -> Option<i32> {
+        let _ = id;
+        None
+    }
+
     /// The guest emitted an event. Observation only: the host cannot refuse one.
     fn event(&mut self, severity: i32, message: &str) {
         let _ = (severity, message);
@@ -105,6 +118,8 @@ mod tests {
         assert_eq!(script.telemetry(9), None);
         assert_eq!(script.parameter(9), None);
         assert_eq!(script.serial_recv(0, false), None);
+        assert_eq!(script.telemetry_status(9), None);
+        assert_eq!(script.parameter_status(9), None);
         assert_eq!(script.now_us(), None);
         // These two return nothing but must still be callable without an override.
         script.event(5, "hello");

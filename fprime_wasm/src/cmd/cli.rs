@@ -29,6 +29,8 @@ pub enum Command {
     Test(Test),
     /// Load compiled sequences on the on-board interpreter and size them.
     Verify(Verify),
+    /// Compile `.seq` command sequences, with IF/ELIF/ELSE, to Wasm.
+    Seq(Seq),
 }
 
 #[derive(Args)]
@@ -125,6 +127,22 @@ pub struct Verify {
     /// else a stock sequencer.
     #[arg(long, value_name = "PATH")]
     pub limits: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct Seq {
+    /// `.seq` files to compile. Each is written next to itself as `<name>.wasm`.
+    #[arg(required = true)]
+    pub sequences: Vec<PathBuf>,
+
+    /// The deployment's JSON dictionary. Defaults to the one in the sequence project the
+    /// current directory is in.
+    #[arg(long, short)]
+    pub dictionary: Option<PathBuf>,
+
+    /// Where to write the module, for a single sequence.
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 # fprime-wasm
 
 Create and inspect [F Prime](https://github.com/nasa/fprime) Wasm sequence
-projects.
+projects, and compile `.seq` command sequences with conditionals.
 
 ```shell
 cargo binstall fprime-wasm   # prebuilt binary. `cargo install fprime-wasm` builds from source
@@ -111,6 +111,124 @@ stderr: `{schema, limits, modules, errors, summary}`, one entry per module
 under `modules` with the same figures the tables show. `limits` echoes
 `sequencer.toml` whole, `stackSize` included — it is the configuration, not a
 measurement.
+
+## `seq`
+
+```shell
+fprime-wasm seq safing.seq --dictionary RefTopologyDictionary.json
+```
+
+Compiles a `.seq` file, the command sequence format `fprime-seqgen` reads for
+`Svc::CmdSequencer`, into `safing.wasm` for `Svc::WasmSequencer`. The language is
+`.seq` with `IF`/`ELIF`/`ELSE` on telemetry, parameters and command responses.
+Compiling one needs no Rust toolchain and no sequence project. Inside a project,
+`--dictionary` defaults to the project's own dictionary. `--output` names the module
+when compiling a single sequence. Otherwise each module is written next to its source.
+
+```text
+; Power down if the battery is low, otherwise report in.
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+IF TLM power.BatteryVoltage < 21.5 AND PRM power.MODE != SAFE
+    R00:00:05 power.PWR_OFF
+    R00:00:01 power.PWR_STATUS CONTINUE
+    IF LAST_CMD != OK
+        R00:00:00 cmdDisp.CMD_NO_OP_STRING "status failed"
+    ENDIF
+ELIF TLM power.Status.state == OFF
+    R00:00:00 cmdDisp.CMD_NO_OP_STRING "already off"
+ELSE
+    A2026-001T12:00:00 cmdDisp.CMD_NO_OP_STRING "nominal"
+ENDIF
+```
+
+Errors are reported together, as `file:line:column: error: ...`, and nothing is written
+for a sequence that has any. Run `fprime-wasm verify safing.wasm` to size the module
+against `sequencer.toml`, then upload it and `RUN` it like any other module.
+
+### Commands
+
+A command line is exactly what `fprime-seqgen` reads, so an existing `.seq` file
+compiles unchanged.
+
+```text
+R01:00:01.050 cmdDisp.CMD_NO_OP_STRING "Awesome string!" ; and a comment
+```
+
+* **Time tag.** `RHH:MM:SS[.ffffff]` waits that long after the previous command
+  completes (or after the sequence starts). `AYYYY-DDDTHH:MM:SS[.ffffff]` waits until
+  that UTC time. `R00:00:00` dispatches at once. Any other wait is an `rsleep` or
+  `asleep`, which the sequencer wakes from on its `checkTimers` tick.
+* **Mnemonic.** The command's full dictionary name (`CdhCore.cmdDisp.CMD_NO_OP`) or any
+  trailing part of it that is unique (`cmdDisp.CMD_NO_OP`, `CMD_NO_OP`). Telemetry
+  channels and parameters are looked up the same way.
+* **Arguments**, optionally separated by commas: numbers (`42`, `-7`, `0x1F`, `1_000`,
+  `2.5e-1`), strings (`"..."` or `'...'`, taken verbatim as `fprime-seqgen` does),
+  `true`/`false`, enum constants (`RED` or `Ref.Choice.RED`), arrays (`[1, 2, 3]`) and
+  structs (`{first: RED, second: BLUE}`). Each is checked against the dictionary and
+  serialised when the sequence is compiled. A value out of range, a string longer than
+  its argument, or a missing struct member is an error, not a truncation.
+* **Failure.** A command that responds other than `OK` ends the sequence: it exits with
+  the command's line number as its code, which `Svc::WasmSequencer` reports and counts as
+  a failure. Write `CONTINUE` after the arguments to carry on regardless. `CONTINUE`
+  after a full argument list is always this modifier, even when the last argument is an
+  enum that has a `CONTINUE` constant.
+
+### Conditions
+
+```text
+IF <condition>
+ELIF <condition>
+ELSE
+ENDIF
+```
+
+Blocks nest, up to 32 deep. Keywords are upper case. A condition compares operands:
+
+| Operand | Is |
+|---|---|
+| `TLM <channel>` | A telemetry channel's current value |
+| `PRM <parameter>` | A parameter's current value |
+| `LAST_CMD` | The last command's `Fw::CmdResponse`: `OK`, `EXECUTION_ERROR`, ... `OK` before any command |
+| `21.5`, `0x10`, `true`, `RED` | A constant |
+
+A member or element is reached the way it is written: `TLM health.Status.history[2]`.
+Members after a string are out of reach, since where they land depends on the string.
+
+Comparisons are `==`, `!=`, `<`, `<=`, `>` and `>=`. Combine them with `AND`, `OR`, `NOT`
+and parentheses. `NOT` binds tightest and `OR` loosest. `AND` and `OR` stop at the side
+that decides, so a channel on the other side is not read. A bool operand is a condition
+on its own: `IF TLM sys.Enabled`.
+
+| Operand type | Compares with | Operators |
+|---|---|---|
+| Integer | An integer constant it can hold, or any other number | all |
+| Float | A number, or any other number | all |
+| Bool | `true`, `false`, or another bool | `==`, `!=` |
+| Enum | One of its constants, or the same enum | `==`, `!=` |
+
+Two operands are compared in a type that holds both exactly: `TLM a.U32 > TLM b.I32`
+compares as 64-bit signed integers, not as raw bits. The one pair that has no such type,
+`U64` against a signed integer, is an error. A float constant against an `F32` channel
+is taken as an `F32`, so `TLM x.F32 == 0.1` holds when the channel is `0.1`. Strings,
+and whole structs and arrays, cannot be compared.
+
+A channel or parameter that does not read as valid ends the sequence, with the line of
+the `IF` or `ELIF` reading it as the exit code: telemetry must be `VALID`, a parameter
+`VALID` or `DEFAULT`.
+
+### What it compiles to
+
+A `.seq` module imports only the `fprime_v1` functions it uses and exports `main`. Its
+memory is sized to the byte. It holds each distinct command, already serialised, so a
+repeated command costs only the call to send it, plus room for one value read. The
+on-board interpreter validates a function against at most 64 nested blocks. Each `IF`,
+and each `AND`/`OR` nested inside another, takes one, and each `ELIF` chain takes two
+however long it is. A sequence that needs more is an error at compile time, not a module
+that fails to load.
+
+Unlike `Svc::CmdSequencer`, there is no time base check, since a module has no header
+to carry one. Absolute times are compared against whatever the sequencer's clock
+reports.
 
 ## `sequencer.toml`
 

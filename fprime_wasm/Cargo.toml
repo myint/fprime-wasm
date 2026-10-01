@@ -26,3 +26,6 @@ clap = { version = "4.6.7", features = ["derive"] }
 toml_edit = { version = "0.25.15", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+# Emits the modules `fprime-wasm seq` compiles. The wasm-tools release `fprime_test` already
+# reads modules with (`wasmparser`), so the two agree on what a module is.
+wasm-encoder = { version = "0.259", default-features = false }
