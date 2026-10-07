@@ -72,7 +72,7 @@ impl Token {
             }
             Token::Name(name) => format!("`{name}`"),
             Token::Int(value) => format!("`{value}`"),
-            Token::Float(value) => format!("`{value}`"),
+            Token::Float(value) => format!("`{value:?}`"),
             Token::Str(value) => format!("string \"{value}\""),
             Token::Bool(value) => format!("`{value}`"),
             Token::Comma => "`,`".into(),
@@ -126,7 +126,7 @@ pub fn lex(source: &str, diagnostics: &mut Vec<Diagnostic>) -> Vec<Line> {
                 Err(diagnostic) => {
                     diagnostics.push(diagnostic);
                     current.broken = true;
-                    lexer.skip_line();
+                    lexer.skip_logical_line();
                 }
             },
         }
@@ -168,6 +168,31 @@ impl Lexer {
     /// Up to, not including, the end of the line.
     fn skip_line(&mut self) {
         while self.peek(0).is_some_and(|c| c != '\n') {
+            self.bump();
+        }
+    }
+
+    /// Up to the end of the logical line: past any physical line that ends in a `\`
+    /// continuation, so what it continues onto is not read as a line of its own. A `\` in a
+    /// `;` comment does not continue the line, as it does not when the line lexes.
+    fn skip_logical_line(&mut self) {
+        loop {
+            let mut continued = false;
+            while let Some(c) = self.peek(0).filter(|&c| c != '\n') {
+                match c {
+                    ';' => {
+                        self.skip_line();
+                        return;
+                    }
+                    '\\' => continued = true,
+                    ' ' | '\t' | '\r' | '\x0c' => {}
+                    _ => continued = false,
+                }
+                self.bump();
+            }
+            if !continued || self.peek(0).is_none() {
+                return;
+            }
             self.bump();
         }
     }
@@ -347,6 +372,13 @@ impl Lexer {
             let value: f64 = text
                 .parse()
                 .map_err(|_| Diagnostic::error(span, format!("malformed number `{text}`")))?;
+            // Past `f64::MAX` parses as infinity, which no argument or channel holds.
+            if !value.is_finite() {
+                return Err(Diagnostic::error(
+                    span,
+                    format!("`{text}` is too large to be a number here"),
+                ));
+            }
             Ok(Token::Float(value))
         } else {
             let value: i128 = text.parse().map_err(|_| {
@@ -643,6 +675,30 @@ mod tests {
     }
 
     #[test]
+    fn an_error_skips_the_lines_its_line_continues_onto() {
+        let mut diagnostics = vec![];
+        let lines = lex(
+            "R00:00:00 C # \\\n  \"x\" \\ \n  2\nR00:00:00 D # ; \\\nR00:00:00 E",
+            &mut diagnostics,
+        );
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+        let firsts: Vec<&Token> = lines.iter().map(|line| &line.tokens[0].0).collect();
+        assert_eq!(firsts.len(), 3, "{firsts:?}");
+        assert!(lines[0].broken && lines[1].broken && !lines[2].broken);
+        assert_eq!(
+            lines[2].tokens[1].0,
+            name("E"),
+            "a `\\` in a comment continues nothing"
+        );
+    }
+
+    #[test]
+    fn floats_read_as_floats_in_messages() {
+        assert_eq!(Token::Float(1.0).describe(), "`1.0`");
+        assert_eq!(Token::Float(-2.5).describe(), "`-2.5`");
+    }
+
+    #[test]
     fn lexical_errors() {
         assert!(error("R00:00:00 C \"open").contains("no closing quote"));
         assert!(error("IF TLM x = 3").contains("compare with `==`"));
@@ -652,5 +708,6 @@ mod tests {
         assert!(
             error("R00:00:00 C 99999999999999999999999999999999999999999").contains("too large")
         );
+        assert!(error("IF TLM x < 1e999").contains("too large"));
     }
 }

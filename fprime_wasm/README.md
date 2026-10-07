@@ -206,15 +206,31 @@ on its own: `IF TLM sys.Enabled`.
 | Bool | `true`, `false`, or another bool | `==`, `!=` |
 | Enum | One of its constants, or the same enum | `==`, `!=` |
 
-Two operands are compared in a type that holds both exactly: `TLM a.U32 > TLM b.I32`
+Two integers are compared in a type that holds both exactly: `TLM a.U32 > TLM b.I32`
 compares as 64-bit signed integers, not as raw bits. The one pair that has no such type,
-`U64` against a signed integer, is an error. A float constant against an `F32` channel
+`U64` against a signed integer, is an error. An integer against a float is compared as an
+`F64`, which is exact up to 32 bits; a `U64` or `I64` beyond 2^53 is rounded to the
+nearest `F64` first. A float constant against an `F32` channel
 is taken as an `F32`, so `TLM x.F32 == 0.1` holds when the channel is `0.1`. Strings,
 and whole structs and arrays, cannot be compared.
 
 A channel or parameter that does not read as valid ends the sequence, with the line of
 the `IF` or `ELIF` reading it as the exit code: telemetry must be `VALID`, a parameter
 `VALID` or `DEFAULT`.
+
+A condition is evaluated as soon as the line before it is done, before the time tag of
+the first command inside it. In
+
+```text
+R00:00:00 cmdDisp.CMD_NO_OP
+IF TLM power.BatteryVoltage < 21.5
+    R00:10:00 power.PWR_OFF
+ENDIF
+```
+
+the voltage is read right after `CMD_NO_OP` completes, and `PWR_OFF` follows ten minutes
+later whatever the voltage is by then. To decide on a fresher reading, wait first with a
+command of its own (`R00:10:00 cmdDisp.CMD_NO_OP`) and put the `IF` after it.
 
 ### What it compiles to
 

@@ -127,7 +127,7 @@ impl ValueKind {
     pub fn describe(&self) -> String {
         match self {
             ValueKind::Int(value) => format!("`{value}`"),
-            ValueKind::Float(value) => format!("`{value}`"),
+            ValueKind::Float(value) => format!("`{value:?}`"),
             ValueKind::Bool(value) => format!("`{value}`"),
             ValueKind::Str(value) => format!("string \"{value}\""),
             ValueKind::Name(name) => format!("`{name}`"),

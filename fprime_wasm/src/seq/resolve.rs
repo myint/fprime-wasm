@@ -958,35 +958,40 @@ fn in_domain(domain: Domain, number: i128) -> Const {
 /// Where two operands of these kinds can be compared, if anywhere.
 fn unify(a: &Kind, b: &Kind) -> Option<Domain> {
     match (a, b) {
-        (Kind::Enum(x, _), Kind::Enum(y, _)) => {
-            (x.qualified_name == y.qualified_name).then(|| a.domain())
-        }
+        // The same enum, but not always the same representation: LAST_CMD is an `i32`
+        // whatever `Fw.CmdResponse` is serialised as. Enums only compare for equality, so
+        // when no integer type holds both (U64 against I32), 64 bits are wide enough.
+        (Kind::Enum(x, p), Kind::Enum(y, q)) => (x.qualified_name == y.qualified_name)
+            .then(|| integers(*p, *q).unwrap_or(Domain::I64 { signed: true })),
         (Kind::Bool, Kind::Bool) => Some(Domain::I32 { signed: true }),
         (Kind::Bool | Kind::Enum(..), _) | (_, Kind::Bool | Kind::Enum(..)) => None,
         (Kind::Float(FloatKind::F32), Kind::Float(FloatKind::F32)) => Some(Domain::F32),
         (Kind::Float(_), _) | (_, Kind::Float(_)) => Some(Domain::F64),
-        (Kind::Int(x), Kind::Int(y)) => {
-            let holds = |domain: Domain, kind: IntegerKind| {
-                let (low, high) = encode::range(kind);
-                let (min, max) = match domain {
-                    Domain::I32 { signed: true } => (i128::from(i32::MIN), i128::from(i32::MAX)),
-                    Domain::I32 { signed: false } => (0, i128::from(u32::MAX)),
-                    Domain::I64 { signed: true } => (i128::from(i64::MIN), i128::from(i64::MAX)),
-                    Domain::I64 { signed: false } => (0, i128::from(u64::MAX)),
-                    Domain::F32 | Domain::F64 => unreachable!("integer domains only"),
-                };
-                min <= low && high <= max
-            };
-            [
-                Domain::I32 { signed: true },
-                Domain::I32 { signed: false },
-                Domain::I64 { signed: true },
-                Domain::I64 { signed: false },
-            ]
-            .into_iter()
-            .find(|domain| holds(*domain, *x) && holds(*domain, *y))
-        }
+        (Kind::Int(x), Kind::Int(y)) => integers(*x, *y),
     }
+}
+
+/// The narrowest integer domain that holds every value of both kinds, if any.
+fn integers(x: IntegerKind, y: IntegerKind) -> Option<Domain> {
+    let holds = |domain: Domain, kind: IntegerKind| {
+        let (low, high) = encode::range(kind);
+        let (min, max) = match domain {
+            Domain::I32 { signed: true } => (i128::from(i32::MIN), i128::from(i32::MAX)),
+            Domain::I32 { signed: false } => (0, i128::from(u32::MAX)),
+            Domain::I64 { signed: true } => (i128::from(i64::MIN), i128::from(i64::MAX)),
+            Domain::I64 { signed: false } => (0, i128::from(u64::MAX)),
+            Domain::F32 | Domain::F64 => unreachable!("integer domains only"),
+        };
+        min <= low && high <= max
+    };
+    [
+        Domain::I32 { signed: true },
+        Domain::I32 { signed: false },
+        Domain::I64 { signed: true },
+        Domain::I64 { signed: false },
+    ]
+    .into_iter()
+    .find(|domain| holds(*domain, x) && holds(*domain, y))
 }
 
 #[cfg(test)]
@@ -1032,6 +1037,50 @@ mod tests {
         assert_eq!(unify(&f32k, &f64k), Some(Domain::F64));
         assert_eq!(unify(&f32k, &Kind::Int(IntegerKind::U8)), Some(Domain::F64));
         assert_eq!(unify(&Kind::Bool, &f32k), None);
+    }
+
+    #[test]
+    fn an_enum_meets_itself_whatever_each_side_is_loaded_as() {
+        let enum_type = |name: &str| EnumType {
+            qualified_name: name.into(),
+            representation_type: TypeName::Integer {
+                name: IntegerKind::I64,
+            },
+            enumerated_constants: vec![],
+            default: String::new(),
+            annotation: None,
+        };
+        let (responses, other) = (enum_type("Fw.CmdResponse"), enum_type("Ref.Choice"));
+        let enumeration = |ty, kind| Kind::Enum(ty, kind);
+        // LAST_CMD (`i32`) against a channel of a 64-bit `Fw.CmdResponse`
+        for (a, b, expected) in [
+            (
+                IntegerKind::I32,
+                IntegerKind::I64,
+                Domain::I64 { signed: true },
+            ),
+            (
+                IntegerKind::I32,
+                IntegerKind::U8,
+                Domain::I32 { signed: true },
+            ),
+            (
+                IntegerKind::I32,
+                IntegerKind::U64,
+                Domain::I64 { signed: true },
+            ),
+        ] {
+            let (a, b) = (enumeration(&responses, a), enumeration(&responses, b));
+            assert_eq!(unify(&a, &b), Some(expected));
+            assert_eq!(unify(&b, &a), Some(expected));
+        }
+        assert_eq!(
+            unify(
+                &enumeration(&responses, IntegerKind::I32),
+                &enumeration(&other, IntegerKind::I32)
+            ),
+            None
+        );
     }
 
     #[test]

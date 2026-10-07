@@ -26,26 +26,69 @@ pub fn run(args: &Seq) -> Result<bool> {
     };
     let dictionary = fprime_dictionary::try_parse(&path).map_err(|err| anyhow!("{err}"))?;
 
+    let jobs: Vec<(&PathBuf, PathBuf)> = args
+        .sequences
+        .iter()
+        .map(|source| {
+            let output = args
+                .output
+                .clone()
+                .unwrap_or_else(|| source.with_extension("wasm"));
+            (source, output)
+        })
+        .collect();
+    check_outputs(&jobs)?;
+
     let mut all = true;
-    for source in &args.sequences {
-        let output = args
-            .output
-            .clone()
-            .unwrap_or_else(|| source.with_extension("wasm"));
-        all &= compile(source, &output, &dictionary)?;
+    for (source, output) in &jobs {
+        all &= compile(source, output, &dictionary)?;
     }
     Ok(all)
+}
+
+/// Refuse, before anything is written, a module that would overwrite a source (its own or
+/// another's) or another sequence's module.
+fn check_outputs(jobs: &[(&PathBuf, PathBuf)]) -> Result<()> {
+    let sources: Vec<PathBuf> = jobs.iter().map(|(source, _)| identity(source)).collect();
+    let mut written: Vec<(PathBuf, &Path)> = vec![];
+    for (source, output) in jobs {
+        let target = identity(output);
+        if sources.contains(&target) {
+            bail!(
+                "{} would be overwritten by the module for {}; name the output with --output",
+                output.display(),
+                source.display()
+            );
+        }
+        if let Some((_, earlier)) = written.iter().find(|(path, _)| *path == target) {
+            bail!(
+                "{} and {} would both be written to {}; compile them separately with --output",
+                earlier.display(),
+                source.display(),
+                output.display()
+            );
+        }
+        written.push((target, source));
+    }
+    Ok(())
+}
+
+/// `path` resolved enough to tell whether two spellings name the same file: absolute, with its
+/// directory's links and `..`s resolved when that directory exists.
+fn identity(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    match (absolute.parent(), absolute.file_name()) {
+        (Some(directory), Some(name)) => directory
+            .canonicalize()
+            .map(|directory| directory.join(name))
+            .unwrap_or(absolute),
+        _ => absolute,
+    }
 }
 
 /// Diagnostics go to stderr as `file:line:column: level: message`. Nothing is written for a
 /// sequence with errors.
 fn compile(source: &Path, output: &Path, dictionary: &Dictionary) -> Result<bool> {
-    if source == output {
-        bail!(
-            "{} would be overwritten by its own module; name the output with --output",
-            source.display()
-        );
-    }
     let text = std::fs::read_to_string(source)
         .with_context(|| format!("could not read {}", source.display()))?;
     let label = source.display().to_string();
@@ -156,6 +199,35 @@ mod tests {
 
         let two = args(vec![source.clone(), source], Some(output));
         assert!(run(&two).is_err());
+    }
+
+    #[test]
+    fn refuses_two_sequences_one_module() {
+        let directory = scratch("collide");
+        let seq = directory.join("a.seq");
+        let txt = directory.join("a.txt");
+        std::fs::write(&seq, "R00:00:00 CMD_NO_OP\n").unwrap();
+        std::fs::write(&txt, "R00:00:00 CMD_NO_OP\n").unwrap();
+
+        let err = run(&args(vec![seq, txt], None)).unwrap_err();
+        assert!(err.to_string().contains("would both be written"), "{err}");
+        assert!(!directory.join("a.wasm").exists(), "nothing is written");
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_source_however_it_is_spelled() {
+        let directory = scratch("spelling");
+        let source = directory.join("in.seq");
+        std::fs::write(&source, "R00:00:00 CMD_NO_OP\n").unwrap();
+        let other = directory.join("sub/../in.seq");
+        std::fs::create_dir_all(directory.join("sub")).unwrap();
+
+        let err = run(&args(vec![source.clone()], Some(other))).unwrap_err();
+        assert!(err.to_string().contains("would be overwritten"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&source).unwrap(),
+            "R00:00:00 CMD_NO_OP\n"
+        );
     }
 
     #[test]
