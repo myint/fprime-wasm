@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! ; Command lines are exactly what `fprime-seqgen` reads.
-//! R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+//! R00:00:00 CdhCore.cmdDisp.CMD_NO_OP CONTINUE
 //! IF TLM Ref.typeDemo.ScalarF32Ch < 21.5 AND PRM Ref.typeDemo.CHOICE_PRM == RED
 //!     R00:00:05 Ref.typeDemo.SEND_BOOL true
 //! ELIF LAST_CMD != OK
